@@ -4,24 +4,27 @@ pragma solidity ^0.8.20;
 
 /**
  * @title IPDNEngine
- * @author Bartosz Podemski 
- * @notice This interace consists of all the functions that 
+ * @author Bartosz Podemski
+ * @notice This interace consists of all the functions that
  * the PDNEngine contract should implement.
  */
 interface IPDNEngine {
-    function depositCollateralAndMintPdn() external;
+    function depositCollateralAndMintPdn(
+        address tokenCollateralAddress,
+        uint256 amountCollateral,
+        uint256 amountPdnToMint
+    ) external;
 
-    function depositCollateral() external;
+    function depositCollateral(address tokenCollateralAddress, uint256 amountCollateral) external;
 
-    function redeemCollateralForPdn() external;
+    function redeemCollateralForPdn(address tokenCollateralAddress, uint256 amountCollateral, uint256 amountPdnToBurn)
+        external;
 
-    function redeemCollateral() external;
+    function redeemCollateral(address tokenCollateralAddress, uint256 amountCollateral) external;
 
-    function mintPdn() external;
+    function mintPdn(uint256 amountDscToMint) external;
 
-    function burnPdn() external;
+    function burnPdn(uint256 amount) external;
 
-    function liquidate() external;
-
-    function getHealthFactor() external view;
+    function liquidate(address collateral, address user, uint256 debtToCover) external;
 }
