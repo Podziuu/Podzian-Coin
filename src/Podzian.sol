@@ -16,12 +16,18 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
  * This contract is just the ERC20 implementation of our stablecoin system.
  */
 contract Podzian is ERC20Burnable, Ownable {
+    /**
+     * Errors
+     */
     error Podzian__MustBeMoreThanZero();
     error Podzian__BurnAmountExceedsBalance();
     error Podzian__NotZeroAddress();
 
     constructor() ERC20("Podzian", "PDN") Ownable(msg.sender) {}
 
+    /**
+     * Functions
+     */
     function burn(uint256 _amount) public override onlyOwner {
         uint256 balance = balanceOf(msg.sender);
         if (_amount <= 0 ) {
