@@ -11,8 +11,8 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
  * Collateral: Exogenous (ETH & BTC)
  * Minting: Algorithmic
  * Relative Stability: Pegged to USD
- * 
- * This is the contract meant to be governed by PDNEngine. 
+ *
+ * This is the contract meant to be governed by PDNEngine.
  * This contract is just the ERC20 implementation of our stablecoin system.
  */
 contract Podzian is ERC20Burnable, Ownable {
@@ -30,7 +30,7 @@ contract Podzian is ERC20Burnable, Ownable {
      */
     function burn(uint256 _amount) public override onlyOwner {
         uint256 balance = balanceOf(msg.sender);
-        if (_amount <= 0 ) {
+        if (_amount <= 0) {
             revert Podzian__MustBeMoreThanZero();
         }
         if (balance < _amount) {

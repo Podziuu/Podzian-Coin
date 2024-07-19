@@ -22,7 +22,7 @@ interface IPDNEngine {
 
     function redeemCollateral(address tokenCollateralAddress, uint256 amountCollateral) external;
 
-    function mintPdn(uint256 amountDscToMint) external;
+    function mintPdn(uint256 amountPdnToMint) external;
 
     function burnPdn(uint256 amount) external;
 
