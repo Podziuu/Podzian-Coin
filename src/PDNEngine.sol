@@ -42,6 +42,8 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
     error PDNEngine__TrasnferFailed();
     error PDNEngine__BreaksHealthFactor(uint256 healthFactor);
     error PDNEngine__MintFailed();
+    error PDNEngine__HealthFactorIsFine();
+    error PDNEngine__HealthFactorNotImproved();
 
     /**
      * State Variables
@@ -50,7 +52,8 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
     uint256 private constant PRECISION = 1e18;
     uint256 private constant LIQUIDATION_THRESHOLD = 50;
     uint256 private constant LIQUIDATION_PRECISION = 100;
-    uint256 private constant MIN_HEALTH_FACTOR = 1;
+    uint256 private constant MIN_HEALTH_FACTOR = 1e18;
+    uint256 private constant LIQUIDATION_BONUS = 10; // this means 10%
 
     mapping(address token => address priceFeed) private s_priceFeeds;
     mapping(address user => mapping(address token => uint256 amount)) private s_collateralDeposited;
@@ -63,6 +66,7 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
      * Events
      */
     event CollateralDeposited(address indexed user, address indexed token, uint256 indexed amount);
+    event CollateralRedeemed(address indexed redeemedFrom, address redeemedTo, address indexed token, uint256 amount);
 
     /**
      * Modifiers
@@ -98,19 +102,30 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
     /**
      * External Functions
      */
+
+    /**
+     *
+     * @param tokenCollateralAddress The address of the token to deposit as collateral
+     * @param amountCollateral The amount of collateral to deposit
+     * @param amountPdnToMint The amount of PDN to mint
+     * @notice This function will deposit your collateral and mint PDN in one transaction
+     */
     function depositCollateralAndMintPdn(
         address tokenCollateralAddress,
         uint256 amountCollateral,
         uint256 amountPdnToMint
-    ) external {}
-
+    ) external {
+        depositCollateral(tokenCollateralAddress, amountCollateral);
+        mintPdn(amountPdnToMint);
+    }
     /**
      * @notice follows CEI
      * @param tokenCollateralAddress The address of the token to deposit as collateral
      * @param amountCollateral The amount of collateral to deposit
      */
+
     function depositCollateral(address tokenCollateralAddress, uint256 amountCollateral)
-        external
+        public
         moreThanZero(amountCollateral)
         isAllowedToken(tokenCollateralAddress)
         nonReentrant
@@ -123,18 +138,37 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
         }
     }
 
+    /**
+     *
+     * @param tokenCollateralAddress The address of the token to redeem as collateral
+     * @param amountCollateral The amount of collateral to redeem
+     * @param amountPdnToBurn The amount of PDN to burn
+     * @notice This function will redeem your collateral and burn PDN in one transaction
+     */
     function redeemCollateralForPdn(address tokenCollateralAddress, uint256 amountCollateral, uint256 amountPdnToBurn)
         external
-    {}
+    {
+        burnPdn(amountPdnToBurn);
+        redeemCollateral(tokenCollateralAddress, amountCollateral); // this function will revert if health factor is broken
+    }
 
-    function redeemCollateral(address tokenCollateralAddress, uint256 amountCollateral) external {}
+    // in order to redeem collateral,
+    // 1. health factor must be over 1 AFTER collateral pulled
+    function redeemCollateral(address tokenCollateralAddress, uint256 amountCollateral)
+        public
+        moreThanZero(amountCollateral)
+        nonReentrant
+    {
+        _redeemCollateral(msg.sender, msg.sender, tokenCollateralAddress, amountCollateral);
+        _revertIfHealthFactorIsBroken(msg.sender);
+    }
 
     /**
      * @notice follows CEI
      * @param amountPdnToMint The amount of PDN to mint
      * @notice they must have more collateral value than the minimum threshold
      */
-    function mintPdn(uint256 amountPdnToMint) external moreThanZero(amountPdnToMint) nonReentrant {
+    function mintPdn(uint256 amountPdnToMint) public moreThanZero(amountPdnToMint) nonReentrant {
         s_PDNMinted[msg.sender] += amountPdnToMint;
         _revertIfHealthFactorIsBroken(msg.sender);
         bool minted = i_pdn.mint(msg.sender, amountPdnToMint);
@@ -143,15 +177,73 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
         }
     }
 
-    function burnPdn(uint256 amount) external {}
+    function burnPdn(uint256 amount) public moreThanZero(amount) {
+        _burnPdn(amount, msg.sender, msg.sender);
+        _revertIfHealthFactorIsBroken(msg.sender); // Probably this would never hit
+    }
 
-    function liquidate(address collateral, address user, uint256 debtToCover) external {}
+    /**
+     *
+     * @param collateral The address of the collateral to liquidate
+     * @param user The address of the user to liquidate
+     * @param debtToCover The amount of debt to cover
+     * @notice You can partially liquidate a user
+     * @notice You will get a liquidation bonus for taking the users funds
+     * @notice This function working assumes the protocol will be rougly 200%
+     * overcollateralized at all times
+     * @notice A known bug would be if the protocol were 100% or less collateralized, then
+     * we wouldn't be able to incentive the liquidators.
+     */
+    function liquidate(address collateral, address user, uint256 debtToCover)
+        external
+        moreThanZero(debtToCover)
+        nonReentrant
+    {
+        uint256 startingUserHealthFactor = _healthFactor(user);
+        if (startingUserHealthFactor >= MIN_HEALTH_FACTOR) {
+            revert PDNEngine__HealthFactorIsFine();
+        }
+        uint256 tokenAmountFromDeptCovered = getTokenAmountFromUsd(collateral, debtToCover);
+        uint256 bonusCollateral = (tokenAmountFromDeptCovered * LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
+        uint256 totalCollateralToReedem = tokenAmountFromDeptCovered + bonusCollateral;
+        _redeemCollateral(user, msg.sender, collateral, totalCollateralToReedem);
+        _burnPdn(debtToCover, user, msg.sender);
+
+        uint256 endingUserHealthFactor = _healthFactor(user);
+        if (endingUserHealthFactor <= startingUserHealthFactor) {
+            revert PDNEngine__HealthFactorNotImproved();
+        }
+        _revertIfHealthFactorIsBroken(msg.sender);
+    }
 
     function getHealthFactor() external view {}
 
     /**
      * Private & Internal View Function
      */
+
+    /**
+     * @dev Low-level i nternal function, do not call unlesss the functio calling
+     * it is checking for health factors being broken
+     */
+    function _burnPdn(uint256 amountPdnToBurn, address onBehalfOf, address pdnFrom) private {
+        s_PDNMinted[onBehalfOf] -= amountPdnToBurn;
+        bool success = i_pdn.transferFrom(pdnFrom, address(this), amountPdnToBurn);
+        if (!success) {
+            revert PDNEngine__TrasnferFailed();
+        }
+        i_pdn.burn(amountPdnToBurn);
+    }
+
+    function _redeemCollateral(address from, address to, address tokenCollateralAddress, uint256 amountCollateral) private {
+        s_collateralDeposited[from][tokenCollateralAddress] -= amountCollateral;
+        emit CollateralRedeemed(from, to, tokenCollateralAddress, amountCollateral);
+        bool success = IERC20(tokenCollateralAddress).transfer(to, amountCollateral);
+        if (!success) {
+            revert PDNEngine__TrasnferFailed();
+        }
+    }
+
     function _getAccountInformation(address user)
         private
         view
@@ -193,5 +285,11 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
         (, int256 price,,,) = priceFeed.latestRoundData();
         return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / PRECISION;
+    }
+
+    function getTokenAmountFromUsd(address token, uint256 usdAmountInWei) public view returns (uint256) {
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
+        (, int256 price,,,) = priceFeed.latestRoundData();
+        return (usdAmountInWei * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION);
     }
 }

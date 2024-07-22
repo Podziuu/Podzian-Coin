@@ -5,16 +5,17 @@ pragma solidity ^0.8.20;
 import {Script} from "forge-std/Script.sol";
 import {Podzian} from "../src/Podzian.sol";
 import {PDNEngine} from "../src/PDNEngine.sol";
-import {HelperConfig} from  "./HelperConfig.s.sol";
+import {HelperConfig} from "./HelperConfig.s.sol";
 
 contract DeployPDN is Script {
     address[] public tokenAddresses;
     address[] public priceFeedAddresses;
 
-    function run() external returns (Podzian, PDNEngine) {
+    function run() external returns (Podzian, PDNEngine, HelperConfig) {
         HelperConfig helper = new HelperConfig();
 
-        (address wethUsdPriceFeed, address wbtcUsdPriceFeed, address weth, address wbtc, uint256 deployerKey) = helper.activeNetworkConfig();
+        (address wethUsdPriceFeed, address wbtcUsdPriceFeed, address weth, address wbtc, uint256 deployerKey) =
+            helper.activeNetworkConfig();
 
         tokenAddresses = [weth, wbtc];
         priceFeedAddresses = [wethUsdPriceFeed, wbtcUsdPriceFeed];
@@ -25,6 +26,6 @@ contract DeployPDN is Script {
         pdn.transferOwnership(address(engine));
         vm.stopBroadcast();
 
-        return (pdn, engine);
+        return (pdn, engine, helper);
     }
 }
