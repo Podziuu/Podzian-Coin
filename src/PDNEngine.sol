@@ -203,7 +203,7 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
         if (startingUserHealthFactor >= MIN_HEALTH_FACTOR) {
             revert PDNEngine__HealthFactorIsFine();
         }
-        uint256 tokenAmountFromDeptCovered = getTokenAmountFromUsd(collateral, debtToCover);
+        uint256 tokenAmountFromDeptCovered = getTokenAmountFromUsd(collateral, debtToCover); // amount of collateral in USD
         uint256 bonusCollateral = (tokenAmountFromDeptCovered * LIQUIDATION_BONUS) / LIQUIDATION_PRECISION;
         uint256 totalCollateralToReedem = tokenAmountFromDeptCovered + bonusCollateral;
         _redeemCollateral(user, msg.sender, collateral, totalCollateralToReedem);
@@ -216,14 +216,12 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
         _revertIfHealthFactorIsBroken(msg.sender);
     }
 
-    function getHealthFactor() external view {}
-
     /**
      * Private & Internal View Function
      */
 
     /**
-     * @dev Low-level i nternal function, do not call unlesss the functio calling
+     * @dev Low-level i nternal function, do not call unlesss the function calling
      * it is checking for health factors being broken
      */
     function _burnPdn(uint256 amountPdnToBurn, address onBehalfOf, address pdnFrom) private {
@@ -259,6 +257,13 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
      */
     function _healthFactor(address user) private view returns (uint256) {
         (uint256 totalPdnMinted, uint256 collateralValueInUsd) = _getAccountInformation(user);
+        return _calculateHealthFactor(collateralValueInUsd, totalPdnMinted);
+    }
+
+    function _calculateHealthFactor(uint256 collateralValueInUsd, uint256 totalPdnMinted) private pure returns(uint256) {
+        if (totalPdnMinted == 0) {
+            return type(uint256).max;
+        }
         uint256 collateralAdjustedForThreshold = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
         return (collateralAdjustedForThreshold * PRECISION) / totalPdnMinted;
     }
@@ -291,5 +296,13 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
         (, int256 price,,,) = priceFeed.latestRoundData();
         return (usdAmountInWei * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION);
+    }
+
+    function getAccountInformation(address user) external view returns (uint256 totalPdnMinted, uint256 collateralValueInUsd) {
+        (totalPdnMinted, collateralValueInUsd) = _getAccountInformation(user);
+    }
+
+    function calculateHealthFactor(uint256 collateralValueInUsd, uint256 totalPdnMinted) external pure returns (uint256) {
+        return _calculateHealthFactor(collateralValueInUsd, totalPdnMinted);
     }
 }

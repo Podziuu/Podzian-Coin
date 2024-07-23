@@ -16,7 +16,7 @@ contract HelperConfig is Script {
     }
 
     uint8 public constant DECIMALS = 8;
-    int256 public constant ETH_USD_PRICE = 3400e8;
+    int256 public constant ETH_USD_PRICE = 4000e8; // for easier testing
     int256 public constant BTC_USD_PRICE = 70000e8;
     NetworkConfig public activeNetworkConfig;
     uint256 public DEFAULT_ANVIL_KEY = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
