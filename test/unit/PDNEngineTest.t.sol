@@ -23,6 +23,7 @@ contract PDNEngineTest is Test {
     address btcUsdPriceFeed;
 
     address public USER = makeAddr("user");
+    address public LIQUIDATOR = makeAddr("liquidator");
     uint256 public constant AMOUNT_COLLATERAL = 10 ether;
     uint256 public constant AMOUNT_TO_MINT = 100 ether;
     uint256 public constant AMOUNT_TO_BURN = 10 ether;
@@ -43,6 +44,7 @@ contract PDNEngineTest is Test {
      */
     address[] public tokenAddresses;
     address[] public priceFeedAddresses;
+
     function testRevertsIfTokenLengthDoeesntMatchPriceFeeds() public {
         tokenAddresses.push(weth);
         priceFeedAddresses.push(ethUsdPriceFeed);
@@ -110,7 +112,7 @@ contract PDNEngineTest is Test {
         _;
     }
 
-    function testCanDepositCollateralAndGetAccountInfo() public depositedCollateral() {
+    function testCanDepositCollateralAndGetAccountInfo() public depositedCollateral {
         (uint256 totalPdnMinted, uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
 
         uint256 expectedTotalPdnMinted = 0;
@@ -128,7 +130,8 @@ contract PDNEngineTest is Test {
         uint256 amountToMint = (AMOUNT_COLLATERAL * (uint256(price) * 1e10)) / 1e18;
         vm.startPrank(USER);
         ERC20Mock(weth).approve(address(engine), AMOUNT_COLLATERAL);
-        uint256 expectedHealthFactor = engine.calculateHealthFactor(engine.getUsdValue(weth, AMOUNT_COLLATERAL), amountToMint);
+        uint256 expectedHealthFactor =
+            engine.calculateHealthFactor(engine.getUsdValue(weth, AMOUNT_COLLATERAL), amountToMint);
         vm.expectRevert(abi.encodeWithSelector(PDNEngine.PDNEngine__BreaksHealthFactor.selector, expectedHealthFactor));
         engine.depositCollateralAndMintPdn(weth, AMOUNT_COLLATERAL, amountToMint);
         vm.stopPrank();
@@ -209,7 +212,7 @@ contract PDNEngineTest is Test {
     function testCanReddemCollateral() public depositedCollateral {
         vm.startPrank(USER);
         engine.redeemCollateral(weth, AMOUNT_COLLATERAL);
-        (,uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
+        (, uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
         vm.stopPrank();
         assertEq(collateralValueInUsd, 0);
     }
@@ -228,7 +231,7 @@ contract PDNEngineTest is Test {
         vm.expectRevert(PDNEngine.PDNEngine__NeedsMoreThanZero.selector);
         engine.burnPdn(0);
     }
- 
+
     function testBurnDecreasePdnMinted() public depositedCollateralAndMintedPdn {
         vm.startPrank(USER);
         pdn.approve(address(engine), AMOUNT_TO_BURN);
@@ -245,7 +248,7 @@ contract PDNEngineTest is Test {
         vm.startPrank(USER);
         pdn.approve(address(engine), AMOUNT_TO_MINT);
         engine.redeemCollateralForPdn(weth, AMOUNT_COLLATERAL, AMOUNT_TO_MINT);
-        (uint256 totalPdnMinted ,uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
+        (uint256 totalPdnMinted, uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
         vm.stopPrank();
         assertEq(collateralValueInUsd, 0);
         assertEq(totalPdnMinted, 0);
@@ -254,7 +257,7 @@ contract PDNEngineTest is Test {
     /**
      * Liquidate tests
      */
-    function testRevertsIfHealthFactorIsFine() public depositedCollateral() {
+    function testRevertsIfHealthFactorIsFine() public depositedCollateral {
         uint256 amountToMint = 1 ether;
         vm.startPrank(USER);
         engine.mintPdn(amountToMint);
@@ -262,14 +265,60 @@ contract PDNEngineTest is Test {
         engine.liquidate(weth, USER, 1 ether);
     }
 
-    function testCanLiquidate() public depositedCollateral() {
-        
+    modifier liquidated() {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(engine), AMOUNT_COLLATERAL);
+        engine.depositCollateralAndMintPdn(weth, AMOUNT_COLLATERAL, AMOUNT_TO_MINT);
+        vm.stopPrank();
+        int256 ethPrice = 18e8;
+
+        MockV3Aggregator(ethUsdPriceFeed).updateAnswer(ethPrice);
+        ERC20Mock(weth).mint(LIQUIDATOR, AMOUNT_COLLATERAL * 2);
+
+        vm.startPrank(LIQUIDATOR);
+        ERC20Mock(weth).approve(address(engine), AMOUNT_COLLATERAL * 2);
+        engine.depositCollateralAndMintPdn(weth, AMOUNT_COLLATERAL * 2, AMOUNT_TO_MINT);
+        pdn.approve(address(engine), AMOUNT_TO_MINT);
+        (uint256 minted, uint256 value) = engine.getAccountInformation(LIQUIDATOR);
+        engine.liquidate(weth, USER, AMOUNT_TO_MINT);
+        vm.stopPrank();
+        (uint256 totalPdnMinted, uint256 collateralValueInUsd) = engine.getAccountInformation(LIQUIDATOR);
+        _;
+    }
+
+    function testCanLiquidate() public liquidated {
+        uint256 liquidatorBalance = ERC20Mock(weth).balanceOf(LIQUIDATOR);
+        uint256 expectedWeth = // amount token liquidated to the user + 10% of the amount liquidated
+         engine.getTokenAmountFromUsd(weth, AMOUNT_TO_MINT) + engine.getTokenAmountFromUsd(weth, AMOUNT_TO_MINT) / 10;
+        assertEq(liquidatorBalance, expectedWeth);
+    }
+
+    function testUserStillHasEthAfterLiquidation() public liquidated {
+        uint256 lostEth =
+            engine.getTokenAmountFromUsd(weth, AMOUNT_TO_MINT) + engine.getTokenAmountFromUsd(weth, AMOUNT_TO_MINT) / 10;
+
+        uint256 usdAmountOfLiquidation = engine.getUsdValue(weth, lostEth);
+        uint256 expectedUserEthAmount = engine.getUsdValue(weth, AMOUNT_COLLATERAL) - usdAmountOfLiquidation;
+
+        (, uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
+
+        assertEq(collateralValueInUsd, expectedUserEthAmount);
+    }
+
+    function testUserHasNoMorePdnAfterLiquidation() public liquidated {
+        (uint256 totalPdnMinted,) = engine.getAccountInformation(USER);
+        assertEq(totalPdnMinted, 0);
+    }
+
+    function testLiquidatorTakesOnUsersDebt() public liquidated {
+        (uint256 liquidatorDscMinted,) = engine.getAccountInformation(LIQUIDATOR);
+        assertEq(liquidatorDscMinted, AMOUNT_TO_MINT);
     }
 
     /**
      * Health Factor Tests
      */
-    function testCorrectHealhFactorCalculations() public depositedCollateralAndMintedPdn() {
+    function testCorrectHealhFactorCalculations() public depositedCollateralAndMintedPdn {
         uint256 expectedHealthFactor = 200 ether;
         uint256 healthFactor = engine.getHealthFactor(USER);
         // we are depositing $40,000 value in collateral and
@@ -282,7 +331,7 @@ contract PDNEngineTest is Test {
     /**
      * Getters functions Tests
      */
-    function testGetAccountCollateralValue() depositedCollateral public {
+    function testGetAccountCollateralValue() public depositedCollateral {
         uint256 expectedValue = 40000 ether;
         uint256 collateralValue = engine.getAccountCollateralValue(USER);
         assertEq(collateralValue, expectedValue);
