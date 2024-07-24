@@ -8,6 +8,9 @@ import {Podzian} from "../../src/Podzian.sol";
 import {PDNEngine} from "../../src/PDNEngine.sol";
 import {HelperConfig} from "../../script/HelperConfig.s.sol";
 import {ERC20Mock} from "@openzeppelin/contracts/mocks/token/ERC20Mock.sol";
+import {MockERC20TransferFromFail} from "../mocks/MockERC20TransferFromFail.sol";
+import {MockERC20TransferFail} from "../mocks/MockERC20TransferFail.sol";
+import {MockERC20MintFail} from "../mocks/MockERC20MintFail.sol";
 import {MockV3Aggregator} from "../mocks/MockV3Aggregator.sol";
 
 contract PDNEngineTest is Test {
@@ -21,6 +24,8 @@ contract PDNEngineTest is Test {
 
     address public USER = makeAddr("user");
     uint256 public constant AMOUNT_COLLATERAL = 10 ether;
+    uint256 public constant AMOUNT_TO_MINT = 100 ether;
+    uint256 public constant AMOUNT_TO_BURN = 10 ether;
     uint256 public constant STARTING_ERC20_BALANCE = 100 ether;
 
     event CollateralRedeemed(address indexed redeemedFrom, address redeemedTo, address indexed token, uint256 amount);
@@ -68,6 +73,19 @@ contract PDNEngineTest is Test {
     /**
      * DepositCollateral Tests
      */
+    function testRevertsIfTransactionFail() public {
+        vm.prank(msg.sender);
+        MockERC20TransferFromFail failingToken = new MockERC20TransferFromFail();
+        tokenAddresses = [address(failingToken)];
+        priceFeedAddresses = [ethUsdPriceFeed];
+        vm.prank(msg.sender);
+        PDNEngine eng = new PDNEngine(tokenAddresses, priceFeedAddresses, address(pdn));
+        failingToken.mint(USER, AMOUNT_COLLATERAL);
+
+        vm.expectRevert(PDNEngine.PDNEngine__TransferFailed.selector);
+        eng.depositCollateral(address(failingToken), AMOUNT_COLLATERAL);
+    }
+
     function testRevertsIfCollateralZero() public {
         vm.startPrank(USER);
         vm.expectRevert(PDNEngine.PDNEngine__NeedsMoreThanZero.selector);
@@ -116,21 +134,38 @@ contract PDNEngineTest is Test {
         vm.stopPrank();
     }
 
-    function testCanDepositAndMint() public {
-        (, int256 price,,,) = MockV3Aggregator(ethUsdPriceFeed).latestRoundData();
-        uint256 amountToMint = ((AMOUNT_COLLATERAL * (uint256(price) * 1e10)) / 1e18) / 2; // minting half of our collateral
+    modifier depositedCollateralAndMintedPdn() {
         vm.startPrank(USER);
         ERC20Mock(weth).approve(address(engine), AMOUNT_COLLATERAL);
-        engine.depositCollateralAndMintPdn(weth, AMOUNT_COLLATERAL, amountToMint);
+        engine.depositCollateralAndMintPdn(weth, AMOUNT_COLLATERAL, AMOUNT_TO_MINT);
+        vm.stopPrank();
+        _;
+    }
+
+    function testCanDepositAndMint() public depositedCollateralAndMintedPdn {
         (uint256 totalPdnMinted, uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
         vm.stopPrank();
-        assertEq(totalPdnMinted, amountToMint);
+        assertEq(totalPdnMinted, AMOUNT_TO_MINT);
         assertEq(AMOUNT_COLLATERAL, engine.getTokenAmountFromUsd(weth, collateralValueInUsd));
     }
 
     /**
      * MintPdn Tests
      */
+    function testRevertIfMintFail() public {
+        MockERC20MintFail failingToken = new MockERC20MintFail();
+        tokenAddresses = [weth];
+        priceFeedAddresses = [ethUsdPriceFeed];
+        PDNEngine eng = new PDNEngine(tokenAddresses, priceFeedAddresses, address(failingToken));
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(eng), AMOUNT_COLLATERAL);
+        eng.depositCollateral(weth, AMOUNT_COLLATERAL);
+        failingToken.approve(address(eng), AMOUNT_COLLATERAL);
+        vm.expectRevert(PDNEngine.PDNEngine__MintFailed.selector);
+        eng.mintPdn(1 ether);
+        vm.stopPrank();
+    }
+
     function testRevertsMintIfZero() public {
         vm.expectRevert(PDNEngine.PDNEngine__NeedsMoreThanZero.selector);
         engine.mintPdn(0);
@@ -156,6 +191,21 @@ contract PDNEngineTest is Test {
     /**
      * RedeemPdn Tests
      */
+    function testRevertsIfTransferFail() public {
+        // engine with collateral token that fails on transfer
+        MockERC20TransferFail failingToken = new MockERC20TransferFail();
+        tokenAddresses = [address(failingToken)];
+        priceFeedAddresses = [ethUsdPriceFeed];
+        PDNEngine eng = new PDNEngine(tokenAddresses, priceFeedAddresses, address(pdn));
+        failingToken.mint(USER, AMOUNT_TO_MINT);
+        vm.startPrank(USER);
+        failingToken.approve(address(eng), AMOUNT_TO_MINT);
+        eng.depositCollateral(address(failingToken), AMOUNT_COLLATERAL);
+        vm.expectRevert(PDNEngine.PDNEngine__TransferFailed.selector);
+        eng.redeemCollateral(address(failingToken), 1 ether);
+        vm.stopPrank();
+    }
+
     function testCanReddemCollateral() public depositedCollateral {
         vm.startPrank(USER);
         engine.redeemCollateral(weth, AMOUNT_COLLATERAL);
@@ -179,27 +229,22 @@ contract PDNEngineTest is Test {
         engine.burnPdn(0);
     }
  
-    function testBurnDecreasePdnMinted() public depositedCollateral {
-        uint256 amountToMint = 1 ether;
-        uint256 amountToBurn = 0.5 ether;
+    function testBurnDecreasePdnMinted() public depositedCollateralAndMintedPdn {
         vm.startPrank(USER);
-        engine.mintPdn(amountToMint);
-        pdn.approve(address(engine), amountToBurn);
-        engine.burnPdn(amountToBurn);
+        pdn.approve(address(engine), AMOUNT_TO_BURN);
+        engine.burnPdn(AMOUNT_TO_BURN);
         (uint256 totalPdnMinted,) = engine.getAccountInformation(USER);
         vm.stopPrank();
-        assertEq(totalPdnMinted, amountToMint - amountToBurn);
+        assertEq(totalPdnMinted, AMOUNT_TO_MINT - AMOUNT_TO_BURN);
     }
 
     /**
      * ReddemCorrateralForPdn Tests
      */
-    function testCanReedemCollateralForPdn() public depositedCollateral() {
-        uint256 amountToMint = 1 ether;
+    function testCanReedemCollateralForPdn() public depositedCollateralAndMintedPdn {
         vm.startPrank(USER);
-        engine.mintPdn(amountToMint);
-        pdn.approve(address(engine), amountToMint);
-        engine.redeemCollateralForPdn(weth, AMOUNT_COLLATERAL, amountToMint);
+        pdn.approve(address(engine), AMOUNT_TO_MINT);
+        engine.redeemCollateralForPdn(weth, AMOUNT_COLLATERAL, AMOUNT_TO_MINT);
         (uint256 totalPdnMinted ,uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
         vm.stopPrank();
         assertEq(collateralValueInUsd, 0);
@@ -219,5 +264,27 @@ contract PDNEngineTest is Test {
 
     function testCanLiquidate() public depositedCollateral() {
         
+    }
+
+    /**
+     * Health Factor Tests
+     */
+    function testCorrectHealhFactorCalculations() public depositedCollateralAndMintedPdn() {
+        uint256 expectedHealthFactor = 200 ether;
+        uint256 healthFactor = engine.getHealthFactor(USER);
+        // we are depositing $40,000 value in collateral and
+        // minting $100 dolars of value
+        // so 40,000 * 0.5 = 20,000
+        // 20,000 / 100 = 200
+        assertEq(healthFactor, expectedHealthFactor);
+    }
+
+    /**
+     * Getters functions Tests
+     */
+    function testGetAccountCollateralValue() depositedCollateral public {
+        uint256 expectedValue = 40000 ether;
+        uint256 collateralValue = engine.getAccountCollateralValue(USER);
+        assertEq(collateralValue, expectedValue);
     }
 }

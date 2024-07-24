@@ -39,7 +39,7 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
     error PDNEngine__NeedsMoreThanZero();
     error PDNEngine__TokenAddressesAndPriceFeedsLengthMismatch();
     error PDNEngine__TokenNotSupported();
-    error PDNEngine__TrasnferFailed();
+    error PDNEngine__TransferFailed();
     error PDNEngine__BreaksHealthFactor(uint256 healthFactor);
     error PDNEngine__MintFailed();
     error PDNEngine__HealthFactorIsFine();
@@ -134,7 +134,7 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
         emit CollateralDeposited(msg.sender, tokenCollateralAddress, amountCollateral);
         bool success = IERC20(tokenCollateralAddress).transferFrom(msg.sender, address(this), amountCollateral);
         if (!success) {
-            revert PDNEngine__TrasnferFailed();
+            revert PDNEngine__TransferFailed();
         }
     }
 
@@ -228,7 +228,7 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
         s_PDNMinted[onBehalfOf] -= amountPdnToBurn;
         bool success = i_pdn.transferFrom(pdnFrom, address(this), amountPdnToBurn);
         if (!success) {
-            revert PDNEngine__TrasnferFailed();
+            revert PDNEngine__TransferFailed();
         }
         i_pdn.burn(amountPdnToBurn);
     }
@@ -238,7 +238,7 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
         emit CollateralRedeemed(from, to, tokenCollateralAddress, amountCollateral);
         bool success = IERC20(tokenCollateralAddress).transfer(to, amountCollateral);
         if (!success) {
-            revert PDNEngine__TrasnferFailed();
+            revert PDNEngine__TransferFailed();
         }
     }
 
@@ -304,5 +304,9 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
 
     function calculateHealthFactor(uint256 collateralValueInUsd, uint256 totalPdnMinted) external pure returns (uint256) {
         return _calculateHealthFactor(collateralValueInUsd, totalPdnMinted);
+    }
+
+    function getHealthFactor(address user) public view returns (uint256) {
+        return _healthFactor(user);
     }
 }
