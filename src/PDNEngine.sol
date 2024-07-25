@@ -310,4 +310,8 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
     function getHealthFactor(address user) public view returns (uint256) {
         return _healthFactor(user);
     }
+
+    function getCollateralTokens() external view returns (address[] memory) {
+        return s_collateralTokens;
+    }
 }
