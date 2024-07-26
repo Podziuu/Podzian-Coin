@@ -7,7 +7,7 @@ import {Podzian} from "./Podzian.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
-import {console} from "forge-std/Test.sol";
+import {OracleLib} from "./libraries/OracleLib.sol";
 
 /**
  * @title PDNEngine
@@ -45,6 +45,11 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
     error PDNEngine__MintFailed();
     error PDNEngine__HealthFactorIsFine();
     error PDNEngine__HealthFactorNotImproved();
+
+    /**
+     * Types
+     */
+    using OracleLib for AggregatorV3Interface;
 
     /**
      * State Variables
@@ -285,17 +290,18 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
             uint256 amount = s_collateralDeposited[user][token];
             totalCollateralValueInUsd += getUsdValue(token, amount);
         }
+        return totalCollateralValueInUsd;
     }
 
     function getUsdValue(address token, uint256 amount) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.stalePriceCheck();
         return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / PRECISION;
     }
 
     function getTokenAmountFromUsd(address token, uint256 usdAmountInWei) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]); // 18, 0.1e18
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.stalePriceCheck();
         return ((usdAmountInWei * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION));
     }
 
@@ -313,5 +319,13 @@ contract PDNEngine is IPDNEngine, ReentrancyGuard {
 
     function getCollateralTokens() external view returns (address[] memory) {
         return s_collateralTokens;
+    }
+
+    function getCollateralBalance(address user, address token) external view returns(uint256) {
+        return s_collateralDeposited[user][token];
+    }
+
+    function getCollateralTokenPriceFeed(address token) external view returns(address) {
+        return s_priceFeeds[token];
     }
 }
